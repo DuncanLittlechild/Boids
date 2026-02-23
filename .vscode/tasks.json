@@ -11,10 +11,10 @@
                 "-Wall",
                 "-Wextra",
                 "-fstack-protector-strong",
-                "-fsanitize=address,undefined",
                 "main.cpp",
                 "-o",
-                "${workspaceFolder}/bin/db_main"
+                "${workspaceFolder}/build/db_main",
+                "-lraylib"
                     // Put further linker flags here
             ],
             "group": {
@@ -34,7 +34,8 @@
                 "-O2",
                 "main.cpp",
                 "-o",
-                "${workspaceFolder}/bin/main"
+                "${workspaceFolder}/build/main",
+                "-lraylib"
                     // Put further linker flags here
             ],
             "group": {

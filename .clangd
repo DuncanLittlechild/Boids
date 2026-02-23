@@ -1,8 +1,10 @@
 CompileFlags:
+  Compiler: C:/msys64/ucrt64/bin/g++
   Add:
     - -Wall
     - -Wextra
-    - -Wpedantic
     - -Wshadow
     - -Wconversion
     - -Wsign-conversion
+    - -std=c++23
+    - --target=x86_64-w64-mingw64

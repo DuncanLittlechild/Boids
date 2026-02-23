@@ -5,7 +5,7 @@
             "name": "C++ Debug",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/bin/db_main",
+            "program": "${workspaceFolder}/build/db_main",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

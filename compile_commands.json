@@ -1,0 +1,8 @@
+
+[
+  {
+    "directory": "C:/Users/dunca/Documents/projects/Boids/Boids",
+    "command": "g++ -Wall -Wextra -std=c++23 -o build/dbg_main.o -c main.cpp",
+    "file": "C:/Users/dunca/Documents/projects/Boids/Boids/main.cpp"
+  }
+]
