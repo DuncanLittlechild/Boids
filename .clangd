@@ -1,5 +1,5 @@
 CompileFlags:
-  Compiler: C:/msys64/ucrt64/bin/g++
+  Compiler: g++
   Add:
     - -Wall
     - -Wextra

@@ -34,8 +34,7 @@
                 "-O2",
                 "main.cpp",
                 "-o",
-                "${workspaceFolder}/build/main",
-                "-lraylib"
+                "${workspaceFolder}/bin/main"
                     // Put further linker flags here
             ],
             "group": {
@@ -45,4 +44,5 @@
             "problemMatcher": ["$gcc"]
         }
     ]
+
 }
