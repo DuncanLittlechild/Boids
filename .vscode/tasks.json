@@ -14,7 +14,7 @@
                 "-fsanitize=address,undefined",
                 "main.cpp",
                 "-o",
-                "${workspaceFolder}/bin/db_main"
+                "${workspaceFolder}/build/db_main"
                     // Put further linker flags here
             ],
             "group": {
@@ -34,7 +34,7 @@
                 "-O2",
                 "main.cpp",
                 "-o",
-                "${workspaceFolder}/bin/main"
+                "${workspaceFolder}/build/main"
                     // Put further linker flags here
             ],
             "group": {
@@ -44,4 +44,5 @@
             "problemMatcher": ["$gcc"]
         }
     ]
+
 }
