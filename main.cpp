@@ -2,6 +2,7 @@
 #include <raymath.h>
 #include <vector>
 #include <cmath>
+#include <iostream>
 
 #define RAYGUI_IMPLEMENTATION
 #include "Random.h"
@@ -9,8 +10,8 @@
 #include"raygui.h"
 
 
-constexpr int32 ScreenWidth {1280};
-constexpr int32 ScreenHeight {720};
+constexpr int32 ScreenWidth {680};
+constexpr int32 ScreenHeight {400};
 
 // All values marked as max are non-inclusive
 // Max x and y value a boid can have before it wraps around to 0
@@ -20,8 +21,8 @@ constexpr real32 MaxY{static_cast<real32>(ScreenHeight)};
 // Struct to hold all the parameters needed for/used in the simulation
 struct SimulationSettings {
     // Ensures that boids will always keep moving slightly 
-    real32 MinSpeed{1.0f};
-    real32 MaxSpeed{5.0f};
+    real32 MinSpeed{2.0f};
+    real32 MaxSpeed{10.0f};
 
     // The radius used to calculate the size of a boid
     real32 BoidRadius {4.0f};
@@ -29,17 +30,19 @@ struct SimulationSettings {
     // a limit on the number of boids one boid can interact with at any one time
     // Included for performance reasons
     uint32 MaxInteractable {32};
-    real32 InteractionDistance {50.0f};
+    real32 InteractionDistance {100.0f};
 
     // The distance at which the separation rule begins to come into effect
-    real32 MinSeparation {7.0f};
+    real32 MinSeparation {20.0f};
 
-    real32 SeparationVectorMod {2.0f};
-    real32 AlignmentVectorMod {0.5f};
-    real32 CohesionVectorMod {0.5f};
+    real32 SeparationVectorMod {1.5f};
+    real32 AlignmentVectorMod {1.0f};
+    real32 CohesionVectorMod {1.0f};
     real32 ResultantForceMod {1.0f};
 
     uint32 FramesPerSecond {60};
+
+    bool IsPaused {false};
 };
 
 SimulationSettings GLOBAL_SETTINGS{};
@@ -49,36 +52,22 @@ std::size_t boidNum{100};
 struct Boids {
     std::size_t number;
     std::vector<Vector2> positions;
-
-    std::vector<real32> orientations;
-
     std::vector<Vector2> velocities;
+    std::vector<Vector2> alignment;
+    std::vector<Vector2> cohesion;
+    std::vector<Vector2> separation;
     
     Boids(std::size_t num)
         : number {num}
         , positions(num, Vector2{})
         , velocities(num, Vector2{})
+        , alignment(num, Vector2{})
+        , cohesion(num, Vector2{})
+        , separation(num, Vector2{})
     {};
 };
 
 Boids GLOBAL_BOIDS{boidNum};
-
-void ZeroVector(std::vector<Vector2>& vector){
-    for (auto& vec : vector) {
-        vec.x = 0.0f;
-        vec.y = 0.0f;
-    }
-}
-
-template <typename T>
-T ClampTo(T num, T limit){
-    return num <= limit ? num : limit;
-}
-
-void ClampVec(Vector2& vec, real32 lowerLimit, real32 upperLimit){
-    vec.x = Clamp(vec.x, lowerLimit, upperLimit);
-    vec.y = Clamp(vec.y, lowerLimit, upperLimit);
-}
 
 void ClampSpeed(Vector2& velocity, real32 minSpeed, real32 maxSpeed){
     real32 speed {Vector2Length(velocity)};
@@ -96,7 +85,7 @@ void ClampSpeed(Vector2& velocity, real32 minSpeed, real32 maxSpeed){
 
 // Wraps a number on a target, ensuring it stays in the range 0 <= x < wrapOn
 real32 WrapOn(real32 toWrap, real32 wrapOn) {
-    return toWrap < wrapOn ? (toWrap >= 0 ? toWrap : wrapOn - toWrap) : toWrap - wrapOn;
+    return toWrap < wrapOn ? (toWrap >= 0 ? toWrap : wrapOn + toWrap) : toWrap - wrapOn;
 }
 
 void DrawSimulationGUI() {
@@ -118,7 +107,7 @@ void DrawSimulationGUI() {
     y += 20;
     GuiSliderBar((Rectangle){sidebarX + 10, y, 180, 20}, 
                  NULL, TextFormat("%.2f", GLOBAL_SETTINGS.SeparationVectorMod),
-                 &GLOBAL_SETTINGS.MinSeparation, 0.0f, 5.0f);
+                 &GLOBAL_SETTINGS.SeparationVectorMod, 0.0f, 5.0f);
     y += spacing;
     
     GuiLabel((Rectangle){sidebarX + 10, y, 180, 20}, "Alignment Force Mod");
@@ -134,24 +123,24 @@ void DrawSimulationGUI() {
                  NULL, TextFormat("%.2f", GLOBAL_SETTINGS.CohesionVectorMod),
                  &GLOBAL_SETTINGS.CohesionVectorMod, 0.0f, 5.0f);
     y += spacing;
-    /*
-    GuiLabel((Rectangle){sidebarX + 10, y, 180, 20}, "Max Speed");
+    
+    GuiLabel((Rectangle){sidebarX + 10, y, 180, 20}, "Separation Distance");
     y += 20;
     GuiSliderBar((Rectangle){sidebarX + 10, y, 180, 20}, 
-                 NULL, TextFormat("%.0f", GLOBAL_SETTINGS.maxSpeed),
-                 &GLOBAL_SETTINGS.maxSpeed, 50.0f, 500.0f);
+                 NULL, TextFormat("%.0f", GLOBAL_SETTINGS.MinSeparation),
+                 &GLOBAL_SETTINGS.MinSeparation, 5.0f, 500.0f);
     y += spacing;
     
-    GuiLabel((Rectangle){sidebarX + 10, y, 180, 20}, "Perception Radius");
+    GuiLabel((Rectangle){sidebarX + 10, y, 180, 20}, "Interaction Radius");
     y += 20;
     GuiSliderBar((Rectangle){sidebarX + 10, y, 180, 20}, 
-                 NULL, TextFormat("%.0f", GLOBAL_SETTINGS.perceptionRadius),
-                 &GLOBAL_SETTINGS.perceptionRadius, 20.0f, 200.0f);
+                 NULL, TextFormat("%.0f", GLOBAL_SETTINGS.InteractionDistance),
+                 &GLOBAL_SETTINGS.InteractionDistance, 20.0f, 200.0f);
     y += spacing + 10;
     
     if (GuiButton((Rectangle){sidebarX + 10, y, 180, 30}, 
-                  GLOBAL_SETTINGS.isPaused ? "#131#Resume" : "#132#Pause")) {
-        GLOBAL_SETTINGS.isPaused = !GLOBAL_SETTINGS.isPaused;
+                  GLOBAL_SETTINGS.IsPaused ? "#131#Resume" : "#132#Pause")) {
+        GLOBAL_SETTINGS.IsPaused = !GLOBAL_SETTINGS.IsPaused;
     }
     y += 40;
     
@@ -159,11 +148,22 @@ void DrawSimulationGUI() {
                   "#77#Reset")) {
         GLOBAL_SETTINGS = SimulationSettings{};  // Reset to defaults
     }
-        */
 }
 
-real32 GetDistance(const Vector2& a, const Vector2& b){
-    return Vector2Length(Vector2{a.x-b.x, a.y-b.y});
+// Gets the distance between two points, checking if wrapping the values makes them closer
+// If it does, uses the wrapped distance
+real32 GetWrappedDistance(const Vector2& a, const Vector2& b){
+    real32 dX {abs(a.x - b.x)};
+    real32 dY {abs(a.y - b.y)};
+
+    if (dX > ScreenWidth / 2.0f) {
+        dX = ScreenWidth - dX;
+    }
+    if (dY > ScreenHeight / 2.0f){
+        dY = ScreenHeight - dY;
+    }
+
+    return sqrt(dX * dX + dY * dY);
 }
 
 // Gets the vector from the main boid to the centre of the group of boids contained in the inputted array
@@ -173,50 +173,57 @@ Vector2 GetCentreOfGroupVector(std::vector<std::size_t>& boidsInRange, Vector2& 
         return centreOfGroup;
 
     for (auto& i : boidsInRange){
-        centreOfGroup.x += GLOBAL_BOIDS.positions[i].x;
-        centreOfGroup.y += GLOBAL_BOIDS.positions[i].y;
+        centreOfGroup += GLOBAL_BOIDS.positions[i];
     }
+
+    centreOfGroup /= boidsInRange.size();
+    centreOfGroup -= mainBoidPosition;
     
-    std::size_t arraySize {boidsInRange.size()};
-    if (arraySize){
-        centreOfGroup.x /= boidsInRange.size();
-        centreOfGroup.y /= boidsInRange.size();
-    }
-    
-    return {centreOfGroup.x - mainBoidPosition.x, centreOfGroup.y - mainBoidPosition.y};
+    return Vector2Normalize(centreOfGroup);
 }
 
 // Gets the average velocity vector of an array of vectors
 // This is being used as the average heading vector
 Vector2 GetAverageHeadingVector(std::vector<std::size_t>& boidsInRange){
     Vector2 totalVelocity {0.0f, 0.0f};
+    if (!boidsInRange.size()){
+        return totalVelocity;
+    }
     
     for (auto& i : boidsInRange){
-        totalVelocity.x += GLOBAL_BOIDS.velocities[i].x;
-        totalVelocity.y += GLOBAL_BOIDS.velocities[i].y;
+        totalVelocity += GLOBAL_BOIDS.velocities[i];
     }
+
+    Vector2 averageVelocity {totalVelocity / boidsInRange.size()};
     
-    std::size_t arraySize {boidsInRange.size()};
-    if (arraySize){
-        totalVelocity.x /= arraySize;
-        totalVelocity.y /= arraySize;
-    }
-    
-    return totalVelocity;
+    return averageVelocity;
 }
 
 //Gets the force with which boids that are too close will repel the main boid
-Vector2 GetSeparationForceVector(std::vector<std::size_t>& boidsTooClose, Vector2& mainBoidPosition){
+Vector2 GetSeparationVector(std::vector<std::size_t>& boidsTooClose, Vector2& mainBoidPosition){
     // Get the direction and the magnitude away from the too close boid, and turn that into a velocity vector
     Vector2 separationForceVector {0.0f, 0.0f};
+    if (!boidsTooClose.size()){
+        return separationForceVector;
+    }
     for (auto& i : boidsTooClose){
-        Vector2 diff {mainBoidPosition.x - GLOBAL_BOIDS.positions[i].x, mainBoidPosition.y - GLOBAL_BOIDS.positions[i].y};
-        
-        separationForceVector.x += GLOBAL_SETTINGS.MinSeparation - diff.x;
-        separationForceVector.y += GLOBAL_SETTINGS.MinSeparation - diff.y;
+        Vector2 diff {mainBoidPosition - GLOBAL_BOIDS.positions[i]};
+        real32 distance {Vector2Length(diff)};
+        if (distance > 0.0f){
+            diff = Vector2Normalize(diff);
+            diff /= distance;
+            separationForceVector += diff;
+        }
     }
 
     return separationForceVector;
+}
+
+Vector2 GetRForceVector(Vector2& cohesionForceVector, Vector2& alignmentForceVector, Vector2& separationForceVector){
+     // Get a resultant vector from this
+    return (cohesionForceVector * GLOBAL_SETTINGS.CohesionVectorMod 
+            + alignmentForceVector * GLOBAL_SETTINGS.AlignmentVectorMod 
+            + separationForceVector * GLOBAL_SETTINGS.SeparationVectorMod);
 }
 
 void UpdateBoids(real32 deltaTime) {
@@ -233,7 +240,7 @@ void UpdateBoids(real32 deltaTime) {
         for (auto j {0uz}; j < GLOBAL_BOIDS.number; ++j){
             if (i == j)
                 continue;
-            real32 distance {GetDistance(GLOBAL_BOIDS.positions[i], GLOBAL_BOIDS.positions[j])};
+            real32 distance {GetWrappedDistance(GLOBAL_BOIDS.positions[i], GLOBAL_BOIDS.positions[j])};
             if (distance < GLOBAL_SETTINGS.InteractionDistance){
                  boidsInRange.push_back(j);
                 if (distance < GLOBAL_SETTINGS.MinSeparation){
@@ -245,29 +252,14 @@ void UpdateBoids(real32 deltaTime) {
             }            
         }
         // Generate vectors to represent each of the forces the boid is under. This obtained by getting relevant vectors then subtracting the boids current velocity from this vector
-        Vector2 resultantForceVector{0.0f, 0.0f};
-        if (boidsInRange.size()){
-            Vector2 cohesionForceVector {0.0f, 0.0f};
-            Vector2 alignmentForceVector {0.0f, 0.0f};
-            Vector2 separationForceVector{0.0f, 0.0f};
-            cohesionForceVector = GetCentreOfGroupVector(boidsInRange, GLOBAL_BOIDS.positions[i]);
+        GLOBAL_BOIDS.cohesion[i] = GetCentreOfGroupVector(boidsInRange, GLOBAL_BOIDS.positions[i]);
 
-            alignmentForceVector = GetAverageHeadingVector(boidsInRange);
-            DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + cohesionForceVector.x * 5, GLOBAL_BOIDS.positions[i].y +cohesionForceVector.y, GREEN);
-            DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + alignmentForceVector.x * 5, GLOBAL_BOIDS.positions[i].y + alignmentForceVector.y , PURPLE);
-
-            separationForceVector = GetSeparationForceVector(boidsTooClose, GLOBAL_BOIDS.positions[i]);
-        
-            DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + separationForceVector.x * 5, GLOBAL_BOIDS.positions[i].y + separationForceVector.y * 10, YELLOW);
-            // Get a resultant vector from this
-            resultantForceVector =
-                (cohesionForceVector * GLOBAL_SETTINGS.SeparationVectorMod 
-                + alignmentForceVector * GLOBAL_SETTINGS.AlignmentVectorMod 
-                + separationForceVector * GLOBAL_SETTINGS.SeparationVectorMod);
-        }
-
+        GLOBAL_BOIDS.alignment[i] = GetAverageHeadingVector(boidsInRange);
+        GLOBAL_BOIDS.separation[i] = GetSeparationVector(boidsTooClose, GLOBAL_BOIDS.positions[i]);
+    
+           
+        Vector2 resultantForceVector {GetRForceVector(GLOBAL_BOIDS.cohesion[i], GLOBAL_BOIDS.alignment[i], GLOBAL_BOIDS.separation[i])};
         // Draws resultant force
-        DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + resultantForceVector.x * 5, GLOBAL_BOIDS.positions[i].y + resultantForceVector.y * 10, BLUE);
         // Modify the boid's direction towards the target
         GLOBAL_BOIDS.velocities[i] += resultantForceVector * (1.0f/60.0f) * GLOBAL_SETTINGS.ResultantForceMod;
         ClampSpeed(GLOBAL_BOIDS.velocities[i], 
@@ -286,9 +278,22 @@ void DrawBoids() {
     auto& positions {GLOBAL_BOIDS.positions};
     auto& velocities {GLOBAL_BOIDS.velocities};
     for (auto i {0uz}; i < positions.size(); ++i){
-        real32 orientationDeg {static_cast<real32>(atan(velocities[i].y/velocities[i].x)) * (180 / PI)};
+        real32 orientationDeg {atan2f(velocities[i].y, velocities[i].x) * (180 / PI)};
+        Vector2 resultantForceVector {GetRForceVector(GLOBAL_BOIDS.cohesion[i], GLOBAL_BOIDS.alignment[i], GLOBAL_BOIDS.separation[i])};
+        // Draw boid
         DrawPoly(positions[i], 3, GLOBAL_SETTINGS.BoidRadius, orientationDeg, WHITE);
-        DrawLine(positions[i].x, positions[i].y, positions[i].x + velocities[i].x * 10, positions[i].y + velocities[i].y * 10, RED);
+        // Velocity Vector
+        DrawLine(positions[i].x, positions[i].y, positions[i].x + velocities[i].x, positions[i].y + velocities[i].y, RED);
+        // Iteraction distance 
+        DrawCircleLines(positions[i].x, positions[i].y, GLOBAL_SETTINGS.InteractionDistance, Color{255,255,255,100});
+        // Cohesion Force
+        DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + GLOBAL_BOIDS.cohesion[i].x, GLOBAL_BOIDS.positions[i].y +GLOBAL_BOIDS.cohesion[i].y, GREEN);
+        // Alignment force
+        DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + GLOBAL_BOIDS.alignment[i].x, GLOBAL_BOIDS.positions[i].y + GLOBAL_BOIDS.alignment[i].y , PURPLE);
+        // Separation force
+        DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + GLOBAL_BOIDS.separation[i].x, GLOBAL_BOIDS.positions[i].y + GLOBAL_BOIDS.separation[i].y, YELLOW);
+        // Resultant force
+        DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + resultantForceVector.x, GLOBAL_BOIDS.positions[i].y + resultantForceVector.y, BLUE);
     }
 }
 
@@ -318,10 +323,13 @@ int main(){
     while (!WindowShouldClose()){
         ClearBackground(BLACK);
         BeginDrawing();
+        DrawSimulationGUI();
         DrawBoids();
         EndDrawing();
         real32 deltaTime{GetFrameTime()};
-        UpdateBoids(deltaTime);
+        if (!GLOBAL_SETTINGS.IsPaused){
+            UpdateBoids(deltaTime);
+        }
     }
 
     return 0;
