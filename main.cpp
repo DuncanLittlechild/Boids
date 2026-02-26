@@ -1,45 +1,48 @@
 #include <raylib.h>
+#include <raymath.h>
 #include <vector>
 #include <cmath>
 
+#define RAYGUI_IMPLEMENTATION
 #include "Random.h"
-#include "Vector2_operators.h"
+#include "Type_definitions.h"
+#include"raygui.h"
 
-namespace Settings {
-    int32 ScreenWidth {1280};
-    int32 ScreenHeight {720};
 
-    // All values marked as max are non-inclusive
-    // Max x and y value a boid can have before it wraps around to 0
-    real32 MaxX{static_cast<real32>(ScreenWidth)};
-    real32 MaxY{static_cast<real32>(ScreenHeight)};
+constexpr int32 ScreenWidth {1280};
+constexpr int32 ScreenHeight {720};
 
+// All values marked as max are non-inclusive
+// Max x and y value a boid can have before it wraps around to 0
+constexpr real32 MaxX{static_cast<real32>(ScreenWidth)};
+constexpr real32 MaxY{static_cast<real32>(ScreenHeight)};
+
+// Struct to hold all the parameters needed for/used in the simulation
+struct SimulationSettings {
     // Ensures that boids will always keep moving slightly 
-    real32 Min1DVelocity{-5.0f};
-    real32 Max1DVelocity{5.0f};
+    real32 MinSpeed{1.0f};
+    real32 MaxSpeed{5.0f};
 
     // The radius used to calculate the size of a boid
-    real32 BoidRadius {8.0f};
+    real32 BoidRadius {4.0f};
 
     // a limit on the number of boids one boid can interact with at any one time
     // Included for performance reasons
     uint32 MaxInteractable {32};
-    real32 InteractionDistance {10.0f};
+    real32 InteractionDistance {50.0f};
 
     // The distance at which the separation rule begins to come into effect
-    real32 MinSeparation {1.0f};
-    // Factor by which separation vectors are multiplied
-    real32 SeparationForceFactor {5.0f};
-    // Maximum separation force in any one direction
-    real32 MaxSeparationForce {5.0f};
+    real32 MinSeparation {7.0f};
 
-    real32 SeparationVectorMod {1.0f};
-    real32 AlignmentVectorMod {1.0f};
-    real32 CohesionVectorMod {1.0f};
+    real32 SeparationVectorMod {2.0f};
+    real32 AlignmentVectorMod {0.5f};
+    real32 CohesionVectorMod {0.5f};
     real32 ResultantForceMod {1.0f};
 
     uint32 FramesPerSecond {60};
-}
+};
+
+SimulationSettings GLOBAL_SETTINGS{};
 
 std::size_t boidNum{100};
 
@@ -73,8 +76,22 @@ T ClampTo(T num, T limit){
 }
 
 void ClampVec(Vector2& vec, real32 lowerLimit, real32 upperLimit){
-    vec.x = vec.x >= lowerLimit ? (vec.x < upperLimit ? vec.x : upperLimit) : lowerLimit;
-    vec.y = vec.y >= lowerLimit ? (vec.y < upperLimit ? vec.y : upperLimit) : lowerLimit;
+    vec.x = Clamp(vec.x, lowerLimit, upperLimit);
+    vec.y = Clamp(vec.y, lowerLimit, upperLimit);
+}
+
+void ClampSpeed(Vector2& velocity, real32 minSpeed, real32 maxSpeed){
+    real32 speed {Vector2Length(velocity)};
+    if (speed > 1.0e-5){
+        if (speed < minSpeed){
+            velocity.x = (velocity.x / speed) * minSpeed;
+            velocity.y = (velocity.y / speed) * minSpeed;
+        }
+        else if (speed >= maxSpeed){
+            velocity.x = (velocity.x / speed) * maxSpeed;
+            velocity.y = (velocity.y / speed) * maxSpeed;
+        }
+    }
 }
 
 // Wraps a number on a target, ensuring it stays in the range 0 <= x < wrapOn
@@ -82,8 +99,71 @@ real32 WrapOn(real32 toWrap, real32 wrapOn) {
     return toWrap < wrapOn ? (toWrap >= 0 ? toWrap : wrapOn - toWrap) : toWrap - wrapOn;
 }
 
+void DrawSimulationGUI() {
+    const int sidebarX = 1000;
+    const int sidebarWidth = 200;
+    const int startY = 20;
+    const int spacing = 40;
+    
+    DrawRectangle(sidebarX, 0, sidebarWidth, GetScreenHeight(), 
+                  Fade(LIGHTGRAY, 0.9f));
+    
+    real32 y = static_cast<real32>(startY);
+    
+    GuiGroupBox((Rectangle){sidebarX + 5, y, sidebarWidth - 10, 300}, 
+                "Simulation Controls");
+    y += 30;
+    
+    GuiLabel((Rectangle){sidebarX + 10, y, 180, 20}, "Separation Force Mod");
+    y += 20;
+    GuiSliderBar((Rectangle){sidebarX + 10, y, 180, 20}, 
+                 NULL, TextFormat("%.2f", GLOBAL_SETTINGS.SeparationVectorMod),
+                 &GLOBAL_SETTINGS.MinSeparation, 0.0f, 5.0f);
+    y += spacing;
+    
+    GuiLabel((Rectangle){sidebarX + 10, y, 180, 20}, "Alignment Force Mod");
+    y += 20;
+    GuiSliderBar((Rectangle){sidebarX + 10, y, 180, 20}, 
+                 NULL, TextFormat("%.2f", GLOBAL_SETTINGS.AlignmentVectorMod),
+                 &GLOBAL_SETTINGS.AlignmentVectorMod, 0.0f, 5.0f);
+    y += spacing;
+    
+    GuiLabel((Rectangle){sidebarX + 10, y, 180, 20}, "Cohesion Force Mod");
+    y += 20;
+    GuiSliderBar((Rectangle){sidebarX + 10, y, 180, 20}, 
+                 NULL, TextFormat("%.2f", GLOBAL_SETTINGS.CohesionVectorMod),
+                 &GLOBAL_SETTINGS.CohesionVectorMod, 0.0f, 5.0f);
+    y += spacing;
+    /*
+    GuiLabel((Rectangle){sidebarX + 10, y, 180, 20}, "Max Speed");
+    y += 20;
+    GuiSliderBar((Rectangle){sidebarX + 10, y, 180, 20}, 
+                 NULL, TextFormat("%.0f", GLOBAL_SETTINGS.maxSpeed),
+                 &GLOBAL_SETTINGS.maxSpeed, 50.0f, 500.0f);
+    y += spacing;
+    
+    GuiLabel((Rectangle){sidebarX + 10, y, 180, 20}, "Perception Radius");
+    y += 20;
+    GuiSliderBar((Rectangle){sidebarX + 10, y, 180, 20}, 
+                 NULL, TextFormat("%.0f", GLOBAL_SETTINGS.perceptionRadius),
+                 &GLOBAL_SETTINGS.perceptionRadius, 20.0f, 200.0f);
+    y += spacing + 10;
+    
+    if (GuiButton((Rectangle){sidebarX + 10, y, 180, 30}, 
+                  GLOBAL_SETTINGS.isPaused ? "#131#Resume" : "#132#Pause")) {
+        GLOBAL_SETTINGS.isPaused = !GLOBAL_SETTINGS.isPaused;
+    }
+    y += 40;
+    
+    if (GuiButton((Rectangle){sidebarX + 10, y, 180, 30}, 
+                  "#77#Reset")) {
+        GLOBAL_SETTINGS = SimulationSettings{};  // Reset to defaults
+    }
+        */
+}
+
 real32 GetDistance(const Vector2& a, const Vector2& b){
-    return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2));
+    return Vector2Length(Vector2{a.x-b.x, a.y-b.y});
 }
 
 // Gets the vector from the main boid to the centre of the group of boids contained in the inputted array
@@ -118,8 +198,8 @@ Vector2 GetAverageHeadingVector(std::vector<std::size_t>& boidsInRange){
     
     std::size_t arraySize {boidsInRange.size()};
     if (arraySize){
-        totalVelocity.x /= boidsInRange.size();
-        totalVelocity.y /= boidsInRange.size();
+        totalVelocity.x /= arraySize;
+        totalVelocity.y /= arraySize;
     }
     
     return totalVelocity;
@@ -132,8 +212,8 @@ Vector2 GetSeparationForceVector(std::vector<std::size_t>& boidsTooClose, Vector
     for (auto& i : boidsTooClose){
         Vector2 diff {mainBoidPosition.x - GLOBAL_BOIDS.positions[i].x, mainBoidPosition.y - GLOBAL_BOIDS.positions[i].y};
         
-        separationForceVector.x += ClampTo(Settings::MinSeparation - diff.x, Settings::MaxSeparationForce);
-        separationForceVector.y += ClampTo(Settings::MinSeparation - diff.y, Settings::MaxSeparationForce);
+        separationForceVector.x += GLOBAL_SETTINGS.MinSeparation - diff.x;
+        separationForceVector.y += GLOBAL_SETTINGS.MinSeparation - diff.y;
     }
 
     return separationForceVector;
@@ -145,7 +225,7 @@ void UpdateBoids(real32 deltaTime) {
     // This for loop just updates velocity - position is dealt with later
     for (auto i {0uz}; i < GLOBAL_BOIDS.number; ++i){
         std::vector<std::size_t> boidsInRange;
-        boidsInRange.reserve(Settings::MaxInteractable);
+        boidsInRange.reserve(GLOBAL_SETTINGS.MaxInteractable);
         
         std::vector<std::size_t> boidsTooClose;
         boidsTooClose.reserve(16);
@@ -154,12 +234,12 @@ void UpdateBoids(real32 deltaTime) {
             if (i == j)
                 continue;
             real32 distance {GetDistance(GLOBAL_BOIDS.positions[i], GLOBAL_BOIDS.positions[j])};
-            if (distance < Settings::InteractionDistance){
+            if (distance < GLOBAL_SETTINGS.InteractionDistance){
                  boidsInRange.push_back(j);
-                if (distance < Settings::MinSeparation){
+                if (distance < GLOBAL_SETTINGS.MinSeparation){
                     boidsTooClose.push_back(j);
                 }
-                if (boidsInRange.size() >= Settings::MaxInteractable){
+                if (boidsInRange.size() >= GLOBAL_SETTINGS.MaxInteractable){
                     break;
                 }
             }            
@@ -173,32 +253,32 @@ void UpdateBoids(real32 deltaTime) {
             cohesionForceVector = GetCentreOfGroupVector(boidsInRange, GLOBAL_BOIDS.positions[i]);
 
             alignmentForceVector = GetAverageHeadingVector(boidsInRange);
-            DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + cohesionForceVector.x * 10, GLOBAL_BOIDS.positions[i].y +cohesionForceVector.y, GREEN);
-            DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + alignmentForceVector.x * 10, GLOBAL_BOIDS.positions[i].y + alignmentForceVector.y , PURPLE);
+            DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + cohesionForceVector.x * 5, GLOBAL_BOIDS.positions[i].y +cohesionForceVector.y, GREEN);
+            DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + alignmentForceVector.x * 5, GLOBAL_BOIDS.positions[i].y + alignmentForceVector.y , PURPLE);
 
             separationForceVector = GetSeparationForceVector(boidsTooClose, GLOBAL_BOIDS.positions[i]);
         
-            DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + separationForceVector.x * 10, GLOBAL_BOIDS.positions[i].y + separationForceVector.y * 10, YELLOW);
+            DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + separationForceVector.x * 5, GLOBAL_BOIDS.positions[i].y + separationForceVector.y * 10, YELLOW);
             // Get a resultant vector from this
             resultantForceVector =
-                (cohesionForceVector * Settings::SeparationVectorMod 
-                + alignmentForceVector * Settings::AlignmentVectorMod 
-                + separationForceVector * Settings::SeparationVectorMod)
-                - GLOBAL_BOIDS.velocities[i];
+                (cohesionForceVector * GLOBAL_SETTINGS.SeparationVectorMod 
+                + alignmentForceVector * GLOBAL_SETTINGS.AlignmentVectorMod 
+                + separationForceVector * GLOBAL_SETTINGS.SeparationVectorMod);
         }
 
         // Draws resultant force
-        DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + resultantForceVector.x * 10, GLOBAL_BOIDS.positions[i].y + resultantForceVector.y * 10, BLUE);
+        DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + resultantForceVector.x * 5, GLOBAL_BOIDS.positions[i].y + resultantForceVector.y * 10, BLUE);
         // Modify the boid's direction towards the target
-        ClampVec(GLOBAL_BOIDS.velocities[i] += resultantForceVector * (1.0f/60.0f) * Settings::ResultantForceMod, 
-            Settings::Min1DVelocity, 
-            Settings::Max1DVelocity);
+        GLOBAL_BOIDS.velocities[i] += resultantForceVector * (1.0f/60.0f) * GLOBAL_SETTINGS.ResultantForceMod;
+        ClampSpeed(GLOBAL_BOIDS.velocities[i], 
+            GLOBAL_SETTINGS.MinSpeed, 
+            GLOBAL_SETTINGS.MaxSpeed);
     }
 
     // Use velocity to update position. If they would move off the screen, wrap around to the other side
     for(auto i {0uz}; i < GLOBAL_BOIDS.number; ++i){
-        GLOBAL_BOIDS.positions[i].x = WrapOn(GLOBAL_BOIDS.positions[i].x + GLOBAL_BOIDS.velocities[i].x, Settings::ScreenWidth);
-        GLOBAL_BOIDS.positions[i].y = WrapOn(GLOBAL_BOIDS.positions[i].y + GLOBAL_BOIDS.velocities[i].y, Settings::ScreenHeight);
+        GLOBAL_BOIDS.positions[i].x = WrapOn(GLOBAL_BOIDS.positions[i].x + GLOBAL_BOIDS.velocities[i].x, ScreenWidth);
+        GLOBAL_BOIDS.positions[i].y = WrapOn(GLOBAL_BOIDS.positions[i].y + GLOBAL_BOIDS.velocities[i].y, ScreenHeight);
     }
 }
 
@@ -207,7 +287,7 @@ void DrawBoids() {
     auto& velocities {GLOBAL_BOIDS.velocities};
     for (auto i {0uz}; i < positions.size(); ++i){
         real32 orientationDeg {static_cast<real32>(atan(velocities[i].y/velocities[i].x)) * (180 / PI)};
-        DrawPoly(positions[i], 3, Settings::BoidRadius, orientationDeg, WHITE);
+        DrawPoly(positions[i], 3, GLOBAL_SETTINGS.BoidRadius, orientationDeg, WHITE);
         DrawLine(positions[i].x, positions[i].y, positions[i].x + velocities[i].x * 10, positions[i].y + velocities[i].y * 10, RED);
     }
 }
@@ -220,15 +300,20 @@ int main(){
     
     // Randomly determine the starting position and velocity of all boids.
     for (auto i {0uz}; i < GLOBAL_BOIDS.number; ++i){
-        positions[i].x = Random::get(0.0f, Settings::MaxX);
-        positions[i].y = Random::get(0.0f, Settings::MaxY);
+        positions[i].x = Random::get(0.0f, MaxX);
+        positions[i].y = Random::get(0.0f, MaxY);
 
-        velocities[i].x = Random::get(Settings::Min1DVelocity, Settings::Max1DVelocity);
-        velocities[i].y = Random::get(Settings::Min1DVelocity, Settings::Max1DVelocity);
+        real32 angle {Random::get(-1.0f, 1.0f)};
+        real32 speed {Random::get(GLOBAL_SETTINGS.MinSpeed, GLOBAL_SETTINGS.MaxSpeed)};
+
+
+
+        velocities[i].x = cosf(angle * PI) * speed;
+        velocities[i].y = sinf(angle * PI) * speed;
     }
 
-    InitWindow(Settings::ScreenWidth, Settings::ScreenHeight, "Boids");
-    SetTargetFPS(Settings::FramesPerSecond);
+    InitWindow(ScreenWidth, ScreenHeight, "Boids");
+    SetTargetFPS(GLOBAL_SETTINGS.FramesPerSecond);
 
     while (!WindowShouldClose()){
         ClearBackground(BLACK);
