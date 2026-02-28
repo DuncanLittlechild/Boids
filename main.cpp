@@ -1,8 +1,10 @@
+#include <cstddef>
 #include <raylib.h>
 #include <raymath.h>
 #include <vector>
 #include <cmath>
 #include <iostream>
+#include <cassert>
 
 #define RAYGUI_IMPLEMENTATION
 #include "Random.h"
@@ -10,8 +12,8 @@
 #include"raygui.h"
 
 
-constexpr int32 ScreenWidth {680};
-constexpr int32 ScreenHeight {400};
+constexpr int32 ScreenWidth {1280};
+constexpr int32 ScreenHeight {720};
 
 // All values marked as max are non-inclusive
 // Max x and y value a boid can have before it wraps around to 0
@@ -30,7 +32,10 @@ struct SimulationSettings {
     // a limit on the number of boids one boid can interact with at any one time
     // Included for performance reasons
     uint32 MaxInteractable {32};
-    real32 InteractionDistance {100.0f};
+    // Distance at which the rules start being applied between boids
+    // NOTE: This must be a factor of both screenWidth and screenHeight
+    real32 InteractionDistance {80.0f};
+
 
     // The distance at which the separation rule begins to come into effect
     real32 MinSeparation {20.0f};
@@ -50,6 +55,7 @@ SimulationSettings GLOBAL_SETTINGS{};
 std::size_t boidNum{100};
 
 struct Boids {
+    // TODO: clamp vector size to number to prevent one vector getting longer than the others and everything going wrong
     std::size_t number;
     std::vector<Vector2> positions;
     std::vector<Vector2> velocities;
@@ -68,6 +74,27 @@ struct Boids {
 };
 
 Boids GLOBAL_BOIDS{boidNum};
+
+// Creates a struct to hold key information about the grid used to make force calculation more efficient
+// Stores a lot of variables to further make passing data to functions more easy
+struct CellGrid{
+    uint32 interactionDistInt;
+    uint32 gridHeight;
+    uint32 gridWidth;
+    std::vector<std::vector<std::size_t>> grid;
+
+    CellGrid() = delete;
+    CellGrid(real32 interactionDistance, std::size_t numberOfBoids)
+        : interactionDistInt{static_cast<uint32>(interactionDistance)}
+        , gridHeight(ScreenHeight / static_cast<uint32>(interactionDistance))
+        , gridWidth(ScreenWidth / static_cast<uint32>(interactionDistance))
+        , grid(gridHeight * gridWidth, std::vector<std::size_t>{})
+    {
+        for (auto& cell : grid){
+            cell.reserve(numberOfBoids);
+        }
+    }
+};
 
 void ClampSpeed(Vector2& velocity, real32 minSpeed, real32 maxSpeed){
     real32 speed {Vector2Length(velocity)};
@@ -131,12 +158,13 @@ void DrawSimulationGUI() {
                  &GLOBAL_SETTINGS.MinSeparation, 5.0f, 500.0f);
     y += spacing;
     
-    GuiLabel((Rectangle){sidebarX + 10, y, 180, 20}, "Interaction Radius");
+    // THIS CAUSES BIG PROBLEMS WITH THE GRID!
+   /* GuiLabel((Rectangle){sidebarX + 10, y, 180, 20}, "Interaction Radius");
     y += 20;
     GuiSliderBar((Rectangle){sidebarX + 10, y, 180, 20}, 
                  NULL, TextFormat("%.0f", GLOBAL_SETTINGS.InteractionDistance),
                  &GLOBAL_SETTINGS.InteractionDistance, 20.0f, 200.0f);
-    y += spacing + 10;
+    y += spacing + 10;*/
     
     if (GuiButton((Rectangle){sidebarX + 10, y, 180, 30}, 
                   GLOBAL_SETTINGS.IsPaused ? "#131#Resume" : "#132#Pause")) {
@@ -219,6 +247,8 @@ Vector2 GetSeparationVector(std::vector<std::size_t>& boidsTooClose, Vector2& ma
     return separationForceVector;
 }
 
+
+// Gets the resultant force acting on an object based on its cohesion, alignment, and separation
 Vector2 GetRForceVector(Vector2& cohesionForceVector, Vector2& alignmentForceVector, Vector2& separationForceVector){
      // Get a resultant vector from this
     return (cohesionForceVector * GLOBAL_SETTINGS.CohesionVectorMod 
@@ -226,39 +256,103 @@ Vector2 GetRForceVector(Vector2& cohesionForceVector, Vector2& alignmentForceVec
             + separationForceVector * GLOBAL_SETTINGS.SeparationVectorMod);
 }
 
+std::size_t GetGridCellIndexFromPos(real32 x, real32 y, const CellGrid& cellGrid){
+    return (static_cast<std::size_t>(y) / cellGrid.interactionDistInt) * cellGrid.gridWidth 
+                    + static_cast<std::size_t>(x) / cellGrid.interactionDistInt;
+}
+
+// This is a rough one
+// This gets the boids in range of a specific position on a cell grid
+// As cellgrid.grid is a 1d array that simulates a 2d array, this requires a lot of maths to calculate
+// I should have just used a bloody 2d array, even though that would have it a 3d array
+std::vector<std::size_t> GetBoidsInCellGridRangeFromPos(real32 x, real32 y, const CellGrid& cellGrid){
+    std::vector<std::size_t> boidsInRange{};
+    std::size_t initialCellIndex {GetGridCellIndexFromPos(x, y, cellGrid)};
+    int32 cX = initialCellIndex % cellGrid.gridWidth;
+    int32 cY = initialCellIndex / cellGrid.gridWidth;
+    for (int32 dY {-1}; dY <= 1; ++dY){
+        for (int32 dX {-1}; dX <= 1; ++dX){
+            // The addition then modulo is used to automatically wrap if values would go off the screen
+            std::size_t nX {static_cast<std::size_t>((cX + dX + cellGrid.gridWidth) % cellGrid.gridWidth)};
+            std::size_t nY {static_cast<std::size_t>((cY + dY + cellGrid.gridHeight) % cellGrid.gridHeight)};
+            std::size_t currentCellIndex {GetGridCellIndexFromPos(nX, nY, cellGrid)};
+            
+            for (auto& boid : cellGrid.grid[currentCellIndex]){
+                boidsInRange.push_back(boid);
+            }
+        }
+    }
+
+    return boidsInRange;
+}   
+
 void UpdateBoids(real32 deltaTime) {
     // Apply the rules to the boids
     // TODO: consider memoisation for this
     // This for loop just updates velocity - position is dealt with later
-    for (auto i {0uz}; i < GLOBAL_BOIDS.number; ++i){
-        std::vector<std::size_t> boidsInRange;
-        boidsInRange.reserve(GLOBAL_SETTINGS.MaxInteractable);
-        
-        std::vector<std::size_t> boidsTooClose;
-        boidsTooClose.reserve(16);
-        
-        for (auto j {0uz}; j < GLOBAL_BOIDS.number; ++j){
-            if (i == j)
-                continue;
-            real32 distance {GetWrappedDistance(GLOBAL_BOIDS.positions[i], GLOBAL_BOIDS.positions[j])};
-            if (distance < GLOBAL_SETTINGS.InteractionDistance){
-                 boidsInRange.push_back(j);
-                if (distance < GLOBAL_SETTINGS.MinSeparation){
-                    boidsTooClose.push_back(j);
-                }
-                if (boidsInRange.size() >= GLOBAL_SETTINGS.MaxInteractable){
-                    break;
-                }
-            }            
-        }
-        // Generate vectors to represent each of the forces the boid is under. This obtained by getting relevant vectors then subtracting the boids current velocity from this vector
-        GLOBAL_BOIDS.cohesion[i] = GetCentreOfGroupVector(boidsInRange, GLOBAL_BOIDS.positions[i]);
 
-        GLOBAL_BOIDS.alignment[i] = GetAverageHeadingVector(boidsInRange);
-        GLOBAL_BOIDS.separation[i] = GetSeparationVector(boidsTooClose, GLOBAL_BOIDS.positions[i]);
-    
+    // Sort the boids into a simulated 2d array, each cell of which represents 
+    // an x by x region of the screen, where x is the interaction radius.
+    // This will be used to make the update more efficient, as only the 8 
+    // neighbouring cells will need to be checked for boids to interact with
+    // TODO: find a better way to do this than vector of vectors
+    CellGrid cellGrid (GLOBAL_SETTINGS.InteractionDistance, GLOBAL_BOIDS.number);
+
+    for (auto i {0uz}; i < GLOBAL_BOIDS.number; ++i){
+        // Gets the cell that corresponds to the position
+        std::size_t cellIndex {GetGridCellIndexFromPos(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, cellGrid)};
+        cellGrid.grid[cellIndex].push_back(i);
+    }
+
+    for (auto i {0uz}; i < GLOBAL_BOIDS.number; ++i){
+        std::vector<std::size_t> boidsInNeighbouringCells{GetBoidsInCellGridRangeFromPos(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, cellGrid)};
+        // FORCE CALCULATION
+        // This next section is where the forces are calculated
+        Vector2 centreOfGroup {0.0f, 0.0f};
+        Vector2 totalVelocity {0.0f, 0.0f};
+        Vector2 separationForceVector {0.0f, 0.0f};
+
+        int32 boidsInRange {0};
+        // Boids
+        for (auto& boid : boidsInNeighbouringCells){
+            if (i == boid){
+                continue;
+            }
+
+            real32 distance {GetWrappedDistance(GLOBAL_BOIDS.positions[i], GLOBAL_BOIDS.positions[boid])};
+            if (distance < GLOBAL_SETTINGS.InteractionDistance){
+                centreOfGroup += GLOBAL_BOIDS.positions[boid];
+                totalVelocity += GLOBAL_BOIDS.velocities[boid];
+
+                if (distance < GLOBAL_SETTINGS.MinSeparation){
+                    Vector2 diff {GLOBAL_BOIDS.positions[i] - GLOBAL_BOIDS.positions[boid]};
+                    real32 diffDistance {Vector2Length(diff)};
+                    if (diffDistance > 0.0f){
+                        diff = Vector2Normalize(diff);
+                        diff /= diffDistance;
+                        separationForceVector += diff;
+                    }
+                }
+                ++boidsInRange;
+            }
+        }
+
+        // Average out the centre of group and total velocity vectors
+        if (boidsInRange){
+            centreOfGroup /= boidsInRange;
+            centreOfGroup -= GLOBAL_BOIDS.positions[i];
+
+            totalVelocity /= boidsInRange;
+        }
+
+
+        // Store the forces in the boids object to use for visualisation
+        GLOBAL_BOIDS.cohesion[i] = centreOfGroup;
+
+        GLOBAL_BOIDS.alignment[i] = totalVelocity;
+        GLOBAL_BOIDS.separation[i] = separationForceVector;
            
-        Vector2 resultantForceVector {GetRForceVector(GLOBAL_BOIDS.cohesion[i], GLOBAL_BOIDS.alignment[i], GLOBAL_BOIDS.separation[i])};
+        Vector2 resultantForceVector {GetRForceVector(centreOfGroup, totalVelocity, separationForceVector)};
         // Draws resultant force
         // Modify the boid's direction towards the target
         GLOBAL_BOIDS.velocities[i] += resultantForceVector * (1.0f/60.0f) * GLOBAL_SETTINGS.ResultantForceMod;
@@ -300,6 +394,9 @@ void DrawBoids() {
 // Boids are implemented as the vector indices
 int main(){
     
+    assert ((ScreenWidth % static_cast<uint32>(GLOBAL_SETTINGS.InteractionDistance)) == 0);
+    assert ((ScreenHeight % static_cast<uint32>(GLOBAL_SETTINGS.InteractionDistance)) == 0);
+
     auto& positions {GLOBAL_BOIDS.positions};
     auto& velocities {GLOBAL_BOIDS.velocities};
     
