@@ -12,8 +12,8 @@
 #include"raygui.h"
 
 
-constexpr int32 ScreenWidth {1280};
-constexpr int32 ScreenHeight {720};
+constexpr int32 ScreenWidth {400};
+constexpr int32 ScreenHeight {240};
 
 // All values marked as max are non-inclusive
 // Max x and y value a boid can have before it wraps around to 0
@@ -48,11 +48,18 @@ struct SimulationSettings {
     uint32 FramesPerSecond {60};
 
     bool IsPaused {false};
+    bool ShowAlignment{true};
+    bool ShowSeparation{true};
+    bool ShowCohesion{true};
+    bool ShowRForce{true};
+    bool ShowGrid{true};
+    bool ShowInteractionRadius{true};
+    bool AdvanceByOneFrame{false};
 };
 
 SimulationSettings GLOBAL_SETTINGS{};
 
-std::size_t boidNum{100};
+std::size_t boidNum{20};
 
 struct Boids {
     // TODO: clamp vector size to number to prevent one vector getting longer than the others and everything going wrong
@@ -173,6 +180,36 @@ void DrawSimulationGUI() {
                  NULL, TextFormat("%.0f", GLOBAL_SETTINGS.InteractionDistance),
                  &GLOBAL_SETTINGS.InteractionDistance, 20.0f, 200.0f);
     y += spacing + 10;*/
+    if (GuiButton((Rectangle){sidebarX + 10, y, 180, 30}, 
+                  GLOBAL_SETTINGS.ShowAlignment ? "#131#Show" : "#132#Hide")) {
+        GLOBAL_SETTINGS.ShowAlignment = !GLOBAL_SETTINGS.ShowAlignment;
+    }
+    y += 40;
+    if (GuiButton((Rectangle){sidebarX + 10, y, 180, 30}, 
+                  GLOBAL_SETTINGS.ShowSeparation ? "#131#Show" : "#132#Hide")) {
+        GLOBAL_SETTINGS.ShowSeparation = !GLOBAL_SETTINGS.ShowSeparation;
+    }
+    y += 40;
+    if (GuiButton((Rectangle){sidebarX + 10, y, 180, 30}, 
+                  GLOBAL_SETTINGS.ShowCohesion ? "#131#Show" : "#132#Hide")) {
+        GLOBAL_SETTINGS.ShowCohesion = !GLOBAL_SETTINGS.ShowCohesion;
+    }
+    y += 40;
+    if (GuiButton((Rectangle){sidebarX + 10, y, 180, 30}, 
+                  GLOBAL_SETTINGS.ShowRForce ? "#131#Show" : "#132#Hide")) {
+        GLOBAL_SETTINGS.ShowRForce = !GLOBAL_SETTINGS.ShowRForce;
+    }
+    y += 40;
+    if (GuiButton((Rectangle){sidebarX + 10, y, 180, 30}, 
+                  GLOBAL_SETTINGS.ShowGrid ? "#131#Show" : "#132#Hide")) {
+        GLOBAL_SETTINGS.ShowGrid = !GLOBAL_SETTINGS.ShowGrid;
+    }
+    y += 40;
+    if (GuiButton((Rectangle){sidebarX + 10, y, 180, 30}, 
+                  GLOBAL_SETTINGS.ShowInteractionRadius ? "#131#Show" : "#132#Hide")) {
+        GLOBAL_SETTINGS.ShowInteractionRadius = !GLOBAL_SETTINGS.ShowInteractionRadius;
+    }
+    y += 40;
     
     if (GuiButton((Rectangle){sidebarX + 10, y, 180, 30}, 
                   GLOBAL_SETTINGS.IsPaused ? "#131#Resume" : "#132#Pause")) {
@@ -327,7 +364,45 @@ void UpdateBoids(real32 deltaTime) {
 
             real32 distance {GetWrappedDistance(GLOBAL_BOIDS.positions[i], GLOBAL_BOIDS.positions[boid])};
             if (distance < GLOBAL_SETTINGS.InteractionDistance){
-                centreOfGroup += GLOBAL_BOIDS.positions[boid];
+                Vector2 boidPosition {GLOBAL_BOIDS.positions[boid]};
+                
+                // Checks if the distance wraps either on x, y, or both
+                real32 xDiff {abs(GLOBAL_BOIDS.positions[i].x - GLOBAL_BOIDS.positions[boid].x)};
+                real32 yDiff {abs(GLOBAL_BOIDS.positions[i].y - GLOBAL_BOIDS.positions[boid].y)};
+                if (xDiff > ScreenWidth / 2.0f && yDiff > ScreenHeight / 2.0f){
+                    // If boid is in the second half of the screen and it wraps, 
+                    // then i must be in the first half
+                    if (boidPosition.x > (ScreenWidth / 2)){
+                        boidPosition.x -= ScreenWidth;
+                    }
+                    else {
+                        boidPosition.x += ScreenWidth;
+                    }
+                    if (boidPosition.y > (ScreenHeight / 2)){
+                        boidPosition.y -= ScreenHeight;
+                    }
+                    else{
+                        boidPosition.y += ScreenHeight;
+                    }
+                }
+                else if (xDiff > ScreenWidth / 2.0f){
+                    if (boidPosition.x > (ScreenWidth / 2)){
+                        boidPosition.x -= ScreenWidth;
+                    }
+                    else {
+                        boidPosition.x += ScreenWidth;
+                    }
+                }
+                else if (yDiff > ScreenHeight / 2.0f){
+                    if (boidPosition.y > (ScreenHeight / 2)){
+                        boidPosition.y -= ScreenHeight;
+                    }
+                    else{
+                        boidPosition.y += ScreenHeight;
+                    }
+                }
+                
+                centreOfGroup += boidPosition;
                 totalVelocity += GLOBAL_BOIDS.velocities[boid];
                 
                 // TODO: properly calculate positions
@@ -340,6 +415,9 @@ void UpdateBoids(real32 deltaTime) {
                     }
                 }
                 ++boidsInRange;
+                if (boidsInRange >= GLOBAL_SETTINGS.MaxInteractable){
+                    break;
+                }
             }
         }
 
@@ -372,6 +450,8 @@ void UpdateBoids(real32 deltaTime) {
         GLOBAL_BOIDS.positions[i].x = WrapOn(GLOBAL_BOIDS.positions[i].x + GLOBAL_BOIDS.velocities[i].x, ScreenWidth);
         GLOBAL_BOIDS.positions[i].y = WrapOn(GLOBAL_BOIDS.positions[i].y + GLOBAL_BOIDS.velocities[i].y, ScreenHeight);
     }
+
+
 }
 
 void DrawBoids() {
@@ -385,21 +465,28 @@ void DrawBoids() {
         // Velocity Vector
         DrawLine(positions[i].x, positions[i].y, positions[i].x + velocities[i].x, positions[i].y + velocities[i].y, RED);
         // Iteraction distance 
-        DrawCircleLines(positions[i].x, positions[i].y, GLOBAL_SETTINGS.InteractionDistance, Color{255,255,255,100});
+        if (GLOBAL_SETTINGS.ShowInteractionRadius)
+            DrawCircleLines(positions[i].x, positions[i].y, GLOBAL_SETTINGS.InteractionDistance, Color{255,255,255,100});
         // Cohesion Force
-        DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + GLOBAL_BOIDS.cohesion[i].x, GLOBAL_BOIDS.positions[i].y +GLOBAL_BOIDS.cohesion[i].y, GREEN);
+        if (GLOBAL_SETTINGS.ShowCohesion)
+            DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + GLOBAL_BOIDS.cohesion[i].x, GLOBAL_BOIDS.positions[i].y +GLOBAL_BOIDS.cohesion[i].y, GREEN);
         // Alignment force
-        DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + GLOBAL_BOIDS.alignment[i].x, GLOBAL_BOIDS.positions[i].y + GLOBAL_BOIDS.alignment[i].y , PURPLE);
+        if (GLOBAL_SETTINGS.ShowAlignment) 
+            DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + GLOBAL_BOIDS.alignment[i].x, GLOBAL_BOIDS.positions[i].y + GLOBAL_BOIDS.alignment[i].y , PURPLE);
         // Separation force
-        DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + GLOBAL_BOIDS.separation[i].x, GLOBAL_BOIDS.positions[i].y + GLOBAL_BOIDS.separation[i].y, YELLOW);
+        if (GLOBAL_SETTINGS.ShowSeparation)
+            DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + GLOBAL_BOIDS.separation[i].x, GLOBAL_BOIDS.positions[i].y + GLOBAL_BOIDS.separation[i].y, YELLOW);
         // Resultant force
-        DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + resultantForceVector.x, GLOBAL_BOIDS.positions[i].y + resultantForceVector.y, BLUE);
+        if (GLOBAL_SETTINGS.ShowRForce)
+            DrawLine(GLOBAL_BOIDS.positions[i].x, GLOBAL_BOIDS.positions[i].y, GLOBAL_BOIDS.positions[i].x + resultantForceVector.x, GLOBAL_BOIDS.positions[i].y + resultantForceVector.y, BLUE);
         // visualise the grid
-        for (int i {0}; i < static_cast<int>(ScreenWidth); i += static_cast<int>(GLOBAL_SETTINGS.InteractionDistance)){
-            DrawLine(i, 0, i, ScreenHeight, Color{255,255,255,50});
-        }
-        for (int i {0}; i < static_cast<int>(ScreenHeight); i += static_cast<int>(GLOBAL_SETTINGS.InteractionDistance)){
-            DrawLine(0, i, ScreenWidth, i, Color{255, 255, 255, 50});
+        if (GLOBAL_SETTINGS.ShowGrid){
+            for (int i {0}; i < static_cast<int>(ScreenWidth); i += static_cast<int>(GLOBAL_SETTINGS.InteractionDistance)){
+                DrawLine(i, 0, i, ScreenHeight, Color{255,255,255,50});
+            }
+            for (int i {0}; i < static_cast<int>(ScreenHeight); i += static_cast<int>(GLOBAL_SETTINGS.InteractionDistance)){
+                DrawLine(0, i, ScreenWidth, i, Color{255, 255, 255, 50});
+            }
         }
     }
 }
@@ -431,15 +518,23 @@ int main(){
     SetTargetFPS(GLOBAL_SETTINGS.FramesPerSecond);
 
     while (!WindowShouldClose()){
+        if (IsKeyPressed(KEY_SPACE) || IsKeyDown(KEY_SPACE)){
+            GLOBAL_SETTINGS.AdvanceByOneFrame = true;
+        }
+        if (IsKeyPressed(KEY_TAB)){
+            GLOBAL_SETTINGS.IsPaused = !GLOBAL_SETTINGS.IsPaused;
+        }
         ClearBackground(BLACK);
         BeginDrawing();
         DrawSimulationGUI();
         DrawBoids();
-        EndDrawing();
         real32 deltaTime{GetFrameTime()};
-        if (!GLOBAL_SETTINGS.IsPaused){
+        if (!GLOBAL_SETTINGS.IsPaused || GLOBAL_SETTINGS.AdvanceByOneFrame){
             UpdateBoids(deltaTime);
+            GLOBAL_SETTINGS.AdvanceByOneFrame = false;
         }
+        EndDrawing();
+
     }
 
     return 0;
